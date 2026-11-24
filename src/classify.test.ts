@@ -1,6 +1,4 @@
-// Tests for classify(). Run with:  node --test src/classify.test.ts
-// node:test is built into Node, so this needs no extra package.
-// We hand-build the evidence, so each test runs in milliseconds.
+// Run with: node --test src/classify.test.ts
 
 import { test } from "node:test";
 import assert from "node:assert/strict";

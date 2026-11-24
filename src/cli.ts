@@ -1,13 +1,7 @@
-// Entry point. Four commands:
-//
-//   node src/cli.ts [maxRuns]          repeat the suite, stop early per test
-//   node src/cli.ts order <test-file>  look for order dependence in one file
-//   node src/cli.ts probe <test-file> "<test name>"
-//                                      change one thing (Math.random, CPU load)
-//                                      and see what the flake reacts to
-//   node src/cli.ts diagnose <test-file> "<test name>" [--json]
-//                                      run everything, print the likely cause
-//                                      (--json: machine-readable, for agents)
+// node src/cli.ts [maxRuns]                          repeat the suite
+// node src/cli.ts order <file>                       order dependence in a file
+// node src/cli.ts probe <file> "<test>"              Math.random and CPU load
+// node src/cli.ts diagnose <file> "<test>" [--json]  everything, then a cause
 
 import { resolve } from "node:path";
 import { runMany, nameOfTestId } from "./run.ts";
@@ -24,7 +18,7 @@ function formatPercent(fraction: number): string {
   return `${percent.toFixed(0)}%`;
 }
 
-// ---------- command: repeat (Layers 1 and 2) ----------
+// ---------- repeat ----------
 
 async function repeatCommand(maxRunsArg: string | undefined): Promise<void> {
   let maxRuns = DEFAULT_MAX_RUNS;
@@ -53,7 +47,7 @@ async function repeatCommand(maxRunsArg: string | undefined): Promise<void> {
     );
   }
 
-  // "Fixed" means every test runs as many times as the busiest one.
+  // "Fixed": every test runs as many times as the busiest one.
   const fixedExecutions = busiestTestRuns * summaries.length;
   console.log(
     `\n${busiestTestRuns} runs, ${totalExecutions} test executions ` +
@@ -61,7 +55,7 @@ async function repeatCommand(maxRunsArg: string | undefined): Promise<void> {
   );
 }
 
-// ---------- command: order (Layer 3) ----------
+// ---------- order ----------
 
 async function orderCommand(file: string | undefined): Promise<void> {
   if (file === undefined) {
@@ -76,8 +70,7 @@ async function orderCommand(file: string | undefined): Promise<void> {
 
   const failuresBySeed = await scanSeeds(file, seeds);
 
-  // For each failing test, remember the FIRST seed that made it fail.
-  // (Map keeps insertion order and seeds were added in increasing order.)
+  // First seed that made each test fail (Map keeps insertion order).
   const firstSeedByTest = new Map<string, number>();
   for (const [seed, failedIds] of failuresBySeed) {
     for (const id of failedIds) {
@@ -99,7 +92,6 @@ async function orderCommand(file: string | undefined): Promise<void> {
         `(seed ${seed}, fails ${confirmation.failures}/${confirmation.reruns})`,
     );
 
-    // Only a confirmed order dependence has a polluter worth searching for.
     if (confirmation.verdict === "order-dependent") {
       const polluters = await findPolluters(file, nameOfTestId(id));
       const note = polluters.length > 1 ? "  (needs several together)" : "";
@@ -108,7 +100,7 @@ async function orderCommand(file: string | undefined): Promise<void> {
   }
 }
 
-// ---------- command: probe (Layer 4) ----------
+// ---------- probe ----------
 
 async function probeCommand(
   fileArg: string | undefined,
@@ -118,7 +110,6 @@ async function probeCommand(
     console.log('Usage: node src/cli.ts probe <test-file> "<test name>"');
     return;
   }
-  // Test ids look like "<absolute file path>::<test name>".
   const file = resolve(fileArg);
   const testId = `${file}::${testName}`;
 
@@ -151,11 +142,9 @@ async function probeCommand(
   );
 }
 
-// ---------- command: diagnose (Layer 5) ----------
+// ---------- diagnose ----------
 
-// args: <test-file> "<test name>" [--json]
-//   --json  print ONLY a JSON report on stdout, for agents and CI.
-// Exit code: 0 = no problem found, 1 = a problem was found.
+// --json prints only the JSON report. Exit code 1 when a problem was found.
 async function diagnoseCommand(args: string[]): Promise<void> {
   const json = args.includes("--json");
   const [fileArg, testName] = args.filter((arg) => arg !== "--json");
@@ -174,7 +163,6 @@ async function diagnoseCommand(args: string[]): Promise<void> {
     console.log(`\n${formatText(report)}`);
   }
 
-  // A CI job can fail on this: `node src/cli.ts diagnose ... || echo flaky`.
   process.exitCode = report.hasProblem ? 1 : 0;
 }
 

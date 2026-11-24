@@ -23,22 +23,18 @@ function toStatus(s: string): TestStatus {
   return "other";
 }
 
-// A test id looks like "/abs/path/file.test.tsx::test name".
-// This returns the part before "::", the file path.
+// Test ids look like "/abs/path/file.test.tsx::test name".
 export function fileOfTestId(id: string): string {
   const parts = id.split("::");
   return parts[0];
 }
 
-// ...and this returns the part after the first "::", the test name.
 export function nameOfTestId(id: string): string {
   const separatorAt = id.indexOf("::");
   return id.slice(separatorAt + 2);
 }
 
-// files:     limit the run to these test files. Empty means every file.
-// extraArgs: extra flags passed to Vitest, for example a shuffle seed.
-// env:       extra environment variables for the Vitest process.
+// files: limit the run to these test files (empty: all).
 export async function runOnce(
   files: string[] = [],
   extraArgs: string[] = [],
@@ -78,7 +74,6 @@ async function runInDir(
         ...extraArgs,
         ...files,
       ],
-      // Keep the normal environment and add ours on top.
       { env: { ...process.env, ...env } },
     );
   } catch (e) {
@@ -125,27 +120,21 @@ export type TestSummary = {
   failRate: Interval; // true fail rate is probably inside this range
 };
 
-// How many copies of the suite runMany starts at the same time.
-// Measured on 8 cores, rendering a 3000-row list (130 ms alone):
-//   2 at once -> 137 ms median, 155 max   (about +5%: fine)
-//   4 at once -> 174 ms median, 238 max   (distorts timing: too much)
-// 2 roughly halves the time to prove a test clean (35 runs). It still adds a
-// little load, so a very tight timing budget could be nudged. Set to 1 for a
-// perfectly quiet baseline.
+// Copies of the suite run at once. On 8 cores a 130 ms render took 137 ms at
+// 2 at once (fine) and 174 ms at 4 (distorts timing). Set to 1 for a quiet
+// baseline.
 const RUNS_AT_ONCE = 2;
 
-// startFiles: limit every run to these test files. Empty means the whole suite.
 export async function runMany(
   maxRuns: number,
   startFiles: string[] = [],
 ): Promise<TestSummary[]> {
-  // id -> running tally. "other" (skipped) is counted as neither.
+  // Skipped tests count as neither pass nor fail.
   const counts = new Map<string, { passes: number; fails: number }>();
 
-  let files: string[] = startFiles; // first run: everything, or startFiles
+  let files: string[] = startFiles;
 
   for (let i = 0; i < maxRuns; i += RUNS_AT_ONCE) {
-    // Run RUNS_AT_ONCE copies together, but never go past maxRuns.
     const copies = Math.min(RUNS_AT_ONCE, maxRuns - i);
     const batch = await Promise.all(
       Array.from({ length: copies }, async () => unwrap(await runOnce(files))),
@@ -163,8 +152,7 @@ export async function runMany(
       }
     }
 
-    // Next run: only the files that still hold an undecided test.
-    // A Set keeps each file path once, even if it holds several tests.
+    // Next run: only files that still hold an undecided test.
     const undecidedFiles = new Set<string>();
     for (const [id, c] of counts) {
       const verdict = decide(c.passes, c.fails);
@@ -174,7 +162,7 @@ export async function runMany(
     }
 
     if (undecidedFiles.size === 0) {
-      break; // every test has a verdict: stop
+      break;
     }
 
     files = [];
@@ -187,7 +175,7 @@ export async function runMany(
   for (const [id, c] of counts) {
     const total = c.passes + c.fails;
 
-    // No finished runs (every run skipped): we know nothing, so the full range.
+    // Every run skipped: no information, so the full range.
     let failRate: Interval = { low: 0, high: 1 };
     if (total > 0) {
       failRate = wilson(c.fails, total);

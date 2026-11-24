@@ -1,9 +1,3 @@
-// Layer 4: change ONE thing about how a flaky test runs, then see if the
-// flake reacts. A test that reacts to a change tells us its cause.
-//
-//   probe 1: fix Math.random      -> does the flake become predictable?
-//   probe 2: put the CPU under load -> does the fail rate jump?
-
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { runOnce, unwrap } from "./run.ts";
@@ -13,22 +7,14 @@ import type { Interval } from "./stats.ts";
 
 // ---------- probe 1: fixed Math.random ----------
 //
-// Same idea as Layer 3. There a seed fixed the test ORDER. Here a seed fixes
-// Math.random. If the test fails every time under one seed, and passes under
-// other seeds, then Math.random decides the result.
-//
-// How we change Math.random without touching the test: Vitest runs a "setup
-// file" before every test file. Ours (src/probes/random-setup.ts) replaces
-// Math.random when the env var FLAKESCOPE_RANDOM_SEED is set.
-// A setup file is part of the config, and there is no command line flag for
-// it. So we write a tiny config that extends the project's own config and
-// adds our setup file.
+// A setup file (src/probes/random-setup.ts) replaces Math.random when
+// FLAKESCOPE_RANDOM_SEED is set. Vitest has no CLI flag for setup files, so we
+// write a small config that extends the project's own config and adds it.
 
 const SETUP_FILE = resolve("src/probes/random-setup.ts");
 const BASE_CONFIG = resolve("vitest.config.ts");
 
-// Writes .flakescope/random.config.ts and returns its path. It lives inside
-// the project so that `import "vitest/config"` can find node_modules.
+// Lives inside the project so `import "vitest/config"` finds node_modules.
 async function writeRandomConfig(): Promise<string> {
   const dir = resolve(".flakescope");
   await mkdir(dir, { recursive: true });
@@ -52,7 +38,6 @@ export type RandomProbeResult =
   | { verdict: "not-random-driven"; seed: number; failures: number; reruns: number }
   | { verdict: "inconclusive"; seedsTried: number };
 
-// Is Math.random the cause of this flake?
 export async function randomSeedProbe(
   file: string,
   testId: string,
@@ -60,7 +45,6 @@ export async function randomSeedProbe(
 ): Promise<RandomProbeResult> {
   const configPath = await writeRandomConfig();
 
-  // The SeedRunner for this probe: fix Math.random instead of the order.
   const runWithRandomSeed = async (f: string, seed: number) => {
     const result = await runOnce(
       [f],
@@ -75,7 +59,6 @@ export async function randomSeedProbe(
   const seeds = Array.from({ length: seedsToTry }, (_, i) => i + 1);
   const failuresBySeed = await scanSeeds(file, seeds, runWithRandomSeed, testId);
 
-  // Find the first seed under which OUR test failed.
   let failingSeed: number | undefined;
   for (const [seed, ids] of failuresBySeed) {
     if (ids.includes(testId)) {
@@ -84,14 +67,13 @@ export async function randomSeedProbe(
     }
   }
 
-  // It never failed under any of these seeds. Math.random may still be the
-  // cause (the failing numbers can be rare), but we cannot show it.
+  // Math.random may still be the cause (failing values can be rare), but we
+  // cannot show it.
   if (failingSeed === undefined) {
     return { verdict: "inconclusive", seedsTried: seedsToTry };
   }
 
-  // Rerun that seed. confirmSeed's "order-dependent" just means "this seed
-  // makes it fail every time". Here that means Math.random is the cause.
+  // confirmSeed's "order-dependent" means "this seed fails every time".
   const c = await confirmSeed(file, failingSeed, testId, runWithRandomSeed);
   return {
     verdict: c.verdict === "order-dependent" ? "random-driven" : "not-random-driven",
@@ -103,11 +85,9 @@ export async function randomSeedProbe(
 
 // ---------- probe 2: CPU load ----------
 //
-// Run the test file alone a few times (baseline), then run many copies at the
-// same time (that is the load: the copies compete for the CPU, which is what
-// happens in CI). Compare the fail-rate ranges from Layer 2's wilson().
-// If the loaded range sits completely above the baseline range, the test is
-// sensitive to load.
+// Run the file alone (baseline), then many copies at once so they compete for
+// the CPU, as in CI. Load-sensitive if the loaded range sits above the
+// baseline range.
 
 const BASELINE_RUNS = 6;
 const LOAD_COPIES = 8; // one per core on this machine
@@ -124,16 +104,13 @@ export type LoadProbeResult = {
   loaded: { fails: number; runs: number; range: Interval };
 };
 
-// `known`: results from runs we already did without extra load (Layer 2's
-// repeat runs). Reusing them saves the baseline runs, and for a clean test
-// (35 runs) it gives a tighter range than 6 fresh runs would. If there are
-// fewer than BASELINE_RUNS, we top up with fresh ones.
+// known: earlier runs without extra load, reused as the baseline. Topped up
+// with fresh runs if fewer than BASELINE_RUNS.
 export async function loadProbe(
   file: string,
   testId: string,
   known: { fails: number; runs: number } = { fails: 0, runs: 0 },
 ): Promise<LoadProbeResult> {
-  // Baseline: one run at a time, so nothing competes for the CPU.
   let aloneFails = known.fails;
   let aloneRuns = known.runs;
   while (aloneRuns < BASELINE_RUNS) {
@@ -141,7 +118,6 @@ export async function loadProbe(
     aloneRuns++;
   }
 
-  // Load: LOAD_COPIES runs at the same time, repeated LOAD_ROUNDS times.
   let loadedFails = 0;
   for (let round = 0; round < LOAD_ROUNDS; round++) {
     const results = await Promise.all(
@@ -155,7 +131,6 @@ export async function loadProbe(
   const loadedRange = wilson(loadedFails, loadedRuns);
 
   return {
-    // The two ranges do not overlap, and loaded is the higher one.
     verdict: loadedRange.low > aloneRange.high ? "load-sensitive" : "no-load-effect",
     alone: { fails: aloneFails, runs: aloneRuns, range: aloneRange },
     loaded: { fails: loadedFails, runs: loadedRuns, range: loadedRange },

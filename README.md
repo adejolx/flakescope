@@ -142,5 +142,4 @@ pnpm typecheck      # tsc over src/ and fixtures/
 pnpm fixtures       # run the flaky fixtures (some are meant to fail)
 ```
 
-More: [docs/](docs/README.md) has the decision graph and layer notes, and the
-`GUIDE-*.md` files are the step-by-step build notes.
+More: [docs/decision-graph.md](docs/decision-graph.md) shows the decision flow.

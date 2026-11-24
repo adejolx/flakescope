@@ -1,4 +1,4 @@
-// Tests for report.ts. Run with:  node --test src/report.test.ts
+// Run with: node --test src/report.test.ts
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -16,7 +16,6 @@ const quiet: Evidence = {
   load: { verdict: "no-load-effect", alone: range(0, 0.1), loaded: range(0, 0.19) },
 };
 
-// Build a Diagnosis the same way diagnose.ts does, minus the slow part.
 function diagnosisFor(evidence: Evidence): Diagnosis {
   return {
     testId: "/proj/fixtures/a.test.tsx::a: does a thing",

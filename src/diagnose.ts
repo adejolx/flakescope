@@ -1,8 +1,3 @@
-// Layer 5: run every earlier layer on ONE test, then let classify() judge.
-//
-//   repeat (Layer 2) + order (Layer 3) + Math.random and CPU load (Layer 4)
-//     -> Evidence -> classify() -> Finding[]
-
 import { runMany } from "./run.ts";
 import { orderProbe } from "./order.ts";
 import { randomSeedProbe, loadProbe } from "./perturb.ts";
@@ -12,7 +7,6 @@ import type { Evidence, Finding } from "./classify.ts";
 export type Diagnosis = { testId: string; evidence: Evidence; findings: Finding[] };
 
 export async function diagnose(file: string, testId: string): Promise<Diagnosis> {
-  // Layer 2, limited to this file so other files don't slow it down.
   const summaries = await runMany(100, [file]);
   const summary = summaries.find((s) => s.id === testId);
   if (summary === undefined) {
@@ -26,8 +20,8 @@ export async function diagnose(file: string, testId: string): Promise<Diagnosis>
     failRate: summary.failRate,
   };
 
-  // A test that never passes is a plain failure. classify() will say so
-  // whatever the probes find, so don't spend minutes running them.
+  // Never passes: classify() calls it a plain failure whatever the probes
+  // find, so skip them.
   if (summary.verdict === "broken") {
     const evidence: Evidence = {
       repeat,
@@ -42,18 +36,15 @@ export async function diagnose(file: string, testId: string): Promise<Diagnosis>
     return { testId, evidence, findings: classify(evidence) };
   }
 
-  // Layers 3 and 4. They run one after another: parallel probes would add
-  // CPU load and disturb each other.
+  // Sequential on purpose: parallel probes would add CPU load to each other.
   const order = await orderProbe(file, testId);
   const random = await randomSeedProbe(file, testId);
-  // The repeat runs already measured the test without extra load. Reuse them
-  // as the load probe's baseline instead of running the test again.
+  // The repeat runs are the load probe's baseline.
   const load = await loadProbe(file, testId, {
     fails: summary.fails,
     runs: summary.passes + summary.fails,
   });
 
-  // Translate each probe's full result into the small shape classify() wants.
   const evidence: Evidence = {
     repeat,
     order:

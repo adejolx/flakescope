@@ -1,20 +1,14 @@
-// Layer 6: turn a Diagnosis into something a reader can use.
-//
-//   buildReport()  -> a plain object, printed as JSON for coding agents and CI
-//   formatText()   -> the same facts as readable text for a person
-//
-// Both come from ONE Report object, so the two can never disagree.
-// Nothing here runs Vitest. It is pure, like classify.ts, so it has fast tests.
+// buildReport() gives the JSON for agents and CI; formatText() renders the
+// same Report for people, so the two cannot disagree. Pure; no Vitest runs.
 
 import { relative } from "node:path";
 import type { Diagnosis } from "./diagnose.ts";
 import type { Finding, Evidence } from "./classify.ts";
 
-// Bump this if a field is renamed or removed, so an agent can tell.
+// Bump when a field is renamed or removed.
 export const SCHEMA_VERSION = 1;
 
 export type ReportFinding = Finding & {
-  // A shell command that shows the problem, or null if there is none.
   reproduce: string | null;
 };
 
@@ -27,12 +21,11 @@ export type Report = {
     fails: number;
     failRate: { low: number; high: number };
   };
-  // true when something is wrong (any cause except "none").
   hasProblem: boolean;
   findings: ReportFinding[];
 };
 
-// The most useful thing for an agent: a command that makes the failure happen.
+// A shell command that makes the failure happen, or null.
 function reproduceCommand(
   finding: Finding,
   evidence: Evidence,
@@ -52,7 +45,6 @@ function reproduceCommand(
         `pnpm exec vitest run ${file} --config=.flakescope/random.config.ts`
       );
     case "cpu-load":
-      // 8 copies at once put the CPU under load.
       return (
         `for i in 1 2 3 4 5 6 7 8; do pnpm exec vitest run ${file} & done; wait`
       );
@@ -63,7 +55,7 @@ function reproduceCommand(
   }
 }
 
-// `root`: paths in the report are shown relative to this folder.
+// Paths in the report are relative to root.
 export function buildReport(diagnosis: Diagnosis, root: string): Report {
   const { testId, evidence, findings } = diagnosis;
   const separatorAt = testId.indexOf("::");

@@ -1,26 +1,15 @@
-// Layer 5: turn evidence into a diagnosis.
-//
-// This file does NO running and touches no files. It takes the numbers the
-// earlier layers collected and applies rules. That makes it instant to run
-// and easy to test: see classify.test.ts.
-//
-//   gather evidence (slow, runs Vitest)   ->  diagnose.ts
-//   judge the evidence (instant, pure)    ->  this file
+// Pure rules over collected evidence. Runs nothing; see classify.test.ts.
 
 import type { Verdict, Interval } from "./stats.ts";
 
 export type Evidence = {
-  // Layer 2: running the test over and over.
   repeat: { verdict: Verdict; passes: number; fails: number; failRate: Interval };
-  // Layer 3: shuffling test order.
   order:
     | { verdict: "order-dependent"; seed: number; polluters: string[] }
     | { verdict: "not-order-dependent" };
-  // Layer 4: fixing Math.random.
   random:
     | { verdict: "random-driven"; seed: number }
     | { verdict: "not-random-driven" | "inconclusive" };
-  // Layer 4: putting the CPU under load.
   load: {
     verdict: "load-sensitive" | "no-load-effect";
     alone: Interval;
@@ -51,7 +40,7 @@ const range = (r: Interval) => `${pct(r.low)}..${pct(r.high)}`;
 const CONFIDENCE_RANK: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
 
 export function classify(e: Evidence): Finding[] {
-  // Rule 1: it never passes. That is a real failure, not a flake.
+  // Never passes: a real failure, not a flake.
   if (e.repeat.verdict === "broken") {
     const runs = e.repeat.passes + e.repeat.fails;
     return [
@@ -64,9 +53,8 @@ export function classify(e: Evidence): Finding[] {
     ];
   }
 
-  // A catch: the order scan and the Math.random scan run several copies of
-  // Vitest at once, and that adds CPU load. If the test is load-sensitive, a
-  // failure seen there might be caused by the load, so trust those two less.
+  // The order and Math.random scans run Vitest in parallel, which adds CPU
+  // load. If the test is load-sensitive, trust those two less.
   const loadSensitive = e.load.verdict === "load-sensitive";
   const trust: Confidence = loadSensitive ? "medium" : "high";
   const caveat = loadSensitive
@@ -75,7 +63,6 @@ export function classify(e: Evidence): Finding[] {
 
   const findings: Finding[] = [];
 
-  // Rule 2: fails every time under one shuffle seed.
   if (e.order.verdict === "order-dependent") {
     const who =
       e.order.polluters.length === 0
@@ -92,7 +79,6 @@ export function classify(e: Evidence): Finding[] {
     });
   }
 
-  // Rule 3: fails every time under one Math.random seed.
   if (e.random.verdict === "random-driven") {
     findings.push({
       cause: "math-random",
@@ -105,7 +91,6 @@ export function classify(e: Evidence): Finding[] {
     });
   }
 
-  // Rule 4: the fail rate jumps under CPU load.
   if (loadSensitive) {
     findings.push({
       cause: "cpu-load",
@@ -126,7 +111,7 @@ export function classify(e: Evidence): Finding[] {
     );
   }
 
-  // Rule 5: flaky, but no probe explains it.
+  // Flaky, but no probe explains it.
   if (e.repeat.verdict === "flaky") {
     return [
       {
@@ -144,7 +129,6 @@ export function classify(e: Evidence): Finding[] {
     ];
   }
 
-  // Rule 6: nothing wrong seen.
   return [
     {
       cause: "none",

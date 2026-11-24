@@ -1,10 +1,7 @@
 export type Verdict = "broken" | "flaky" | "clean" | "undecided";
 export type Interval = { low: number; high: number };
 
-// Step 2: the calculator.
-// Input:  how many runs failed, how many runs total.
-// Output: the range the true fail rate probably sits in (95% sure).
-// Black box: you don't need to follow the formula, only the in/out.
+// Wilson score interval: the range the true fail rate sits in, 95% sure.
 export function wilson(fails: number, n: number, z = 1.96): Interval {
   const p = fails / n;
   const denom = 1 + (z * z) / n;
@@ -17,9 +14,7 @@ export function wilson(fails: number, n: number, z = 1.96): Interval {
   };
 }
 
-// Step 3: the decider.
-// Input:  passes and fails seen so far for ONE test.
-// Output: one word. First matching rule wins.
+// One verdict for one test. First matching rule wins.
 export function decide(
   passes: number,
   fails: number,
@@ -28,21 +23,19 @@ export function decide(
     brokenAbove: 0.8,
   },
 ): Verdict {
-  // Saw both a pass and a fail: proven flaky. Nothing more to learn.
+  // A pass and a fail: proven flaky.
   if (passes > 0 && fails > 0) return "flaky";
 
-  // Never passed, and the range's BOTTOM end is high enough: broken.
-  // A few fails in a row proves nothing: a test that fails 65% of the time
-  // fails 3 in a row about 27% of the time. 16 fails in a row clears 80%.
+  // A few fails in a row prove nothing: a 65% flake fails 3 in a row about
+  // 27% of the time. 16 in a row clears 80%.
   if (passes === 0 && fails > 0 && wilson(fails, fails).low > opts.brokenAbove) {
     return "broken";
   }
 
-  // Never failed, and the range's top end is small enough: clean.
+  // 35 passes in a row bring the high end under 10%.
   if (fails === 0 && passes > 0 && wilson(0, passes).high < opts.cleanBelow) {
     return "clean";
   }
 
-  // Not enough evidence yet.
   return "undecided";
 }
