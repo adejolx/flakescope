@@ -3,7 +3,17 @@
 import type { Verdict, Interval } from "./stats.ts";
 
 export type Evidence = {
-  repeat: { verdict: Verdict; passes: number; fails: number; failRate: Interval };
+  // How many copies the order and Math.random scans ran at once. 1 is quiet.
+  scanConcurrency: number;
+  repeat: {
+    verdict: Verdict;
+    passes: number;
+    fails: number;
+    failRate: Interval;
+    // Typical time of a passing and of a failing run, when known.
+    passMedianMs?: number;
+    failMedianMs?: number;
+  };
   order:
     | { verdict: "order-dependent"; seed: number; polluters: string[] }
     | { verdict: "not-order-dependent" };
@@ -22,6 +32,7 @@ export type Cause =
   | "order-dependence"
   | "math-random"
   | "cpu-load"
+  | "wait-timeout"
   | "unknown"
   | "none";
 
@@ -39,6 +50,23 @@ const range = (r: Interval) => `${pct(r.low)}..${pct(r.high)}`;
 
 const CONFIDENCE_RANK: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
 
+// A flaky test whose failing runs take far longer than its passing runs is
+// waiting for something that sometimes never happens, then giving up. Slowness
+// would give a spread of times. This gives two clusters: fast, and "the
+// timeout". "Far longer" = at least 4x and at least 200 ms more.
+function timeoutPattern(
+  r: Evidence["repeat"],
+): { passMs: number; failMs: number } | undefined {
+  if (r.verdict !== "flaky") return undefined;
+  if (r.passMedianMs === undefined || r.failMedianMs === undefined) return undefined;
+  const passMs = r.passMedianMs;
+  const failMs = r.failMedianMs;
+  if (failMs >= 4 * Math.max(passMs, 1) && failMs - passMs >= 200) {
+    return { passMs, failMs };
+  }
+  return undefined;
+}
+
 export function classify(e: Evidence): Finding[] {
   // Never passes: a real failure, not a flake.
   if (e.repeat.verdict === "broken") {
@@ -53,11 +81,14 @@ export function classify(e: Evidence): Finding[] {
     ];
   }
 
-  // The order and Math.random scans run Vitest in parallel, which adds CPU
-  // load. If the test is load-sensitive, trust those two less.
+  // Scans that ran several copies at once add CPU load. If the test is
+  // load-sensitive, a failure seen there may come from the load itself, so
+  // trust those two less. (diagnose reruns them one at a time to avoid this,
+  // which sets scanConcurrency to 1.)
   const loadSensitive = e.load.verdict === "load-sensitive";
-  const trust: Confidence = loadSensitive ? "medium" : "high";
-  const caveat = loadSensitive
+  const confounded = loadSensitive && e.scanConcurrency > 1;
+  const trust: Confidence = confounded ? "medium" : "high";
+  const caveat = confounded
     ? ["measured with parallel runs, which add CPU load: less certain"]
     : [];
 
@@ -102,6 +133,25 @@ export function classify(e: Evidence): Finding[] {
         "The test depends on how fast the machine is. Do not compare " +
         "performance.now() against a fixed budget in a unit test. Use fake " +
         "timers, or assert on behavior and measure speed in a separate benchmark.",
+    });
+  }
+
+  const slow = timeoutPattern(e.repeat);
+  if (slow !== undefined) {
+    const times = Math.round(slow.failMs / Math.max(slow.passMs, 1));
+    findings.push({
+      cause: "wait-timeout",
+      // Few failures means few durations to go on.
+      confidence: e.repeat.fails >= 3 ? "high" : "medium",
+      because: [
+        `failing runs take about ${slow.failMs} ms, passing runs about ${slow.passMs} ms (${times}x)`,
+        "two clusters, fast or timed out: the awaited update sometimes never arrives",
+      ],
+      suggestion:
+        "A wait is timing out. Raising the timeout will not fix it, because in " +
+        "the failing runs the update never arrives. Find why it sometimes does " +
+        "not happen: a missing await, an event fired before its listener exists, " +
+        "or state set outside act().",
     });
   }
 

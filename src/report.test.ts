@@ -10,6 +10,7 @@ import type { Diagnosis } from "./diagnose.ts";
 const range = (low: number, high: number) => ({ low, high });
 
 const quiet: Evidence = {
+  scanConcurrency: 4,
   repeat: { verdict: "clean", passes: 36, fails: 0, failRate: range(0, 0.1) },
   order: { verdict: "not-order-dependent" },
   random: { verdict: "inconclusive" },
@@ -48,7 +49,7 @@ test("order dependence: reproduce command uses the failing shuffle seed", () => 
   assert.equal(r.hasProblem, true);
   assert.equal(
     r.findings[0].reproduce,
-    "pnpm exec vitest run fixtures/a.test.tsx --sequence.shuffle.tests --sequence.seed=3",
+    "npx vitest run fixtures/a.test.tsx --sequence.shuffle.tests --sequence.seed=3",
   );
 });
 
@@ -83,5 +84,24 @@ test("text report shows evidence, fix and reproduce lines", () => {
   );
   assert.match(text, /ORDER-DEPENDENCE/);
   assert.match(text, /polluted by: writer/);
-  assert.match(text, /reproduce: pnpm exec vitest run/);
+  assert.match(text, /reproduce: npx vitest run/);
+});
+
+test("wait-timeout: reproduce command loops until the first failure", () => {
+  const r = buildReport(
+    diagnosisFor({
+      ...quiet,
+      repeat: {
+        verdict: "flaky",
+        passes: 33,
+        fails: 3,
+        failRate: range(0.03, 0.22),
+        passMedianMs: 200,
+        failMedianMs: 1230,
+      },
+    }),
+    "/proj",
+  );
+  assert.equal(r.findings[0].cause, "wait-timeout");
+  assert.match(r.findings[0].reproduce ?? "", /for i in \$\(seq 30\)/);
 });

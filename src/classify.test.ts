@@ -9,6 +9,7 @@ const range = (low: number, high: number) => ({ low, high });
 
 // A baseline with nothing wrong. Each test overrides only what it needs.
 const quiet: Evidence = {
+  scanConcurrency: 4,
   repeat: { verdict: "clean", passes: 35, fails: 0, failRate: range(0, 0.1) },
   order: { verdict: "not-order-dependent" },
   random: { verdict: "inconclusive" },
@@ -76,4 +77,72 @@ test("flaky but unexplained: unknown, low confidence", () => {
   });
   assert.equal(f.cause, "unknown");
   assert.equal(f.confidence, "low");
+});
+
+test("failures take far longer than passes: wait-timeout", () => {
+  const findings = classify({
+    ...quiet,
+    repeat: {
+      verdict: "flaky",
+      passes: 33,
+      fails: 3,
+      failRate: range(0.03, 0.22),
+      passMedianMs: 200,
+      failMedianMs: 1230,
+    },
+  });
+  assert.equal(findings[0].cause, "wait-timeout");
+  assert.equal(findings[0].confidence, "high");
+  assert.match(findings[0].because[0], /1230 ms.*200 ms/);
+});
+
+test("only 2 failures: wait-timeout is medium confidence", () => {
+  const [f] = classify({
+    ...quiet,
+    repeat: {
+      verdict: "flaky",
+      passes: 22,
+      fails: 2,
+      failRate: range(0.02, 0.26),
+      passMedianMs: 200,
+      failMedianMs: 5200,
+    },
+  });
+  assert.equal(f.cause, "wait-timeout");
+  assert.equal(f.confidence, "medium");
+});
+
+test("failures only a bit slower than passes: no wait-timeout", () => {
+  const [f] = classify({
+    ...quiet,
+    repeat: {
+      verdict: "flaky",
+      passes: 20,
+      fails: 5,
+      failRate: range(0.1, 0.4),
+      passMedianMs: 120,
+      failMedianMs: 340, // 2.8x: slow, but not a timeout
+    },
+  });
+  assert.equal(f.cause, "unknown");
+});
+
+test("durations unknown: no wait-timeout", () => {
+  const [f] = classify({
+    ...quiet,
+    repeat: { verdict: "flaky", passes: 20, fails: 5, failRate: range(0.1, 0.4) },
+  });
+  assert.equal(f.cause, "unknown");
+});
+
+test("load-sensitive but scans ran one at a time: order finding stays high", () => {
+  const findings = classify({
+    ...quiet,
+    scanConcurrency: 1,
+    order: { verdict: "order-dependent", seed: 3, polluters: ["writer"] },
+    load: { verdict: "load-sensitive", alone: range(0, 0.1), loaded: range(0.8, 1) },
+  });
+  const order = findings.find((f) => f.cause === "order-dependence");
+  assert.equal(order?.confidence, "high");
+  assert.ok(!order?.because.some((line) => line.includes("parallel")));
 });

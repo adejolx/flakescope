@@ -2,14 +2,16 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { decide, wilson } from "./stats.ts";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { decide, median, wilson } from "./stats.ts";
 import type { Interval, Verdict } from "./stats.ts";
 
 export type TestStatus = "passed" | "failed" | "other";
 export type TestResult = {
   id: string;
   status: TestStatus;
+  ms: number; // how long the test took, from Vitest's own report
 };
 export type RunResult =
   | { kind: "ok"; tests: TestResult[] }
@@ -32,6 +34,18 @@ export function fileOfTestId(id: string): string {
 export function nameOfTestId(id: string): string {
   const separatorAt = id.indexOf("::");
   return id.slice(separatorAt + 2);
+}
+
+// The tool is started from the project's root folder, so this is the
+// project's own Vitest. (Needs a node_modules folder: not yarn Plug'n'Play.)
+function vitestEntry(): string {
+  const entry = resolve("node_modules/vitest/vitest.mjs");
+  if (!existsSync(entry)) {
+    throw new Error(
+      `Cannot find ${entry}. Run flakescope from the project root, after installing its dependencies.`,
+    );
+  }
+  return entry;
 }
 
 // files: limit the run to these test files (empty: all).
@@ -64,10 +78,11 @@ async function runInDir(
 
   try {
     await execFileAsync(
-      "pnpm",
+      // Run the project's own Vitest with this same Node. That works with
+      // pnpm, yarn and npm alike, and skips the package manager's startup.
+      process.execPath,
       [
-        "exec",
-        "vitest",
+        vitestEntry(),
         "run",
         "--reporter=json",
         `--outputFile=${outPath}`,
@@ -94,7 +109,11 @@ async function runInDir(
 
   for (const file of report.testResults) {
     for (const t of file.assertionResults) {
-      testArr.push({ id: `${file.name}::${t.fullName}`, status: toStatus(t.status) });
+      testArr.push({
+        id: `${file.name}::${t.fullName}`,
+        status: toStatus(t.status),
+        ms: Math.round(t.duration ?? 0),
+      });
     }
   }
 
@@ -118,6 +137,10 @@ export type TestSummary = {
   fails: number;
   verdict: Verdict;
   failRate: Interval; // true fail rate is probably inside this range
+  // The typical time of a passing run and of a failing run (undefined if the
+  // test never passed or never failed). A big gap is evidence: see classify.ts.
+  passMedianMs: number | undefined;
+  failMedianMs: number | undefined;
 };
 
 // Copies of the suite run at once. On 8 cores a 130 ms render took 137 ms at
@@ -130,7 +153,10 @@ export async function runMany(
   startFiles: string[] = [],
 ): Promise<TestSummary[]> {
   // Skipped tests count as neither pass nor fail.
-  const counts = new Map<string, { passes: number; fails: number }>();
+  const counts = new Map<
+    string,
+    { passes: number; fails: number; passMs: number[]; failMs: number[] }
+  >();
 
   let files: string[] = startFiles;
 
@@ -142,11 +168,13 @@ export async function runMany(
 
     for (const tests of batch) {
       for (const t of tests) {
-        const c = counts.get(t.id) ?? { passes: 0, fails: 0 };
+        const c = counts.get(t.id) ?? { passes: 0, fails: 0, passMs: [], failMs: [] };
         if (t.status === "passed") {
           c.passes++;
+          c.passMs.push(t.ms);
         } else if (t.status === "failed") {
           c.fails++;
+          c.failMs.push(t.ms);
         }
         counts.set(t.id, c);
       }
@@ -187,6 +215,8 @@ export async function runMany(
       fails: c.fails,
       verdict: decide(c.passes, c.fails),
       failRate,
+      passMedianMs: median(c.passMs),
+      failMedianMs: median(c.failMs),
     });
   }
   return summaries;

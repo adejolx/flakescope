@@ -4,7 +4,8 @@ import { decide } from "./stats.ts";
 // Parallel runs are safe here: an order failure depends on the seed, not on
 // timing. Do not do this for timing-flake detection (CPU contention).
 // Measured on 8 cores: 4 at once is about 3x the throughput of 1.
-const CONCURRENCY = 4;
+// A test that is sensitive to CPU load must be checked with 1 (see diagnose.ts).
+export const CONCURRENCY = 4;
 
 function chunk<T>(items: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -41,10 +42,11 @@ export async function scanSeeds(
   seeds: number[],
   runSeed: SeedRunner = failedTestsForSeed,
   stopWhenFailed?: string,
+  concurrency: number = CONCURRENCY,
 ): Promise<Map<number, string[]>> {
   const failuresBySeed = new Map<number, string[]>();
 
-  for (const group of chunk(seeds, CONCURRENCY)) {
+  for (const group of chunk(seeds, concurrency)) {
     const results = await Promise.all(
       group.map((seed) => runSeed(file, seed)),
     );
@@ -83,6 +85,7 @@ export async function confirmSeed(
   seed: number,
   testId: string,
   runSeed: SeedRunner = failedTestsForSeed,
+  concurrency: number = CONCURRENCY,
 ): Promise<SeedConfirmation> {
   let failures = 0;
   let reruns = 0;
@@ -90,7 +93,7 @@ export async function confirmSeed(
   // decide(0, failures) returns "broken" after 16 fails in a row.
   while (decide(0, failures) !== "broken") {
     const batch = await Promise.all(
-      Array.from({ length: CONCURRENCY }, () => runSeed(file, seed)),
+      Array.from({ length: concurrency }, () => runSeed(file, seed)),
     );
 
     for (const failedIds of batch) {
@@ -130,12 +133,13 @@ async function probe(
   file: string,
   victim: string,
   others: string[],
+  concurrency: number,
 ): Promise<boolean> {
   // execFile passes the pattern as one argument, so no shell quoting.
   const names = [victim, ...others].map(escapeRegex);
   const pattern = `^(${names.join("|")})$`;
 
-  for (const group of chunk(PROBE_SEEDS, CONCURRENCY)) {
+  for (const group of chunk(PROBE_SEEDS, concurrency)) {
     const results = await Promise.all(
       group.map(async (seed) => {
         const args = [
@@ -164,14 +168,15 @@ async function probe(
 export async function findPolluters(
   file: string,
   victim: string,
+  concurrency: number = CONCURRENCY,
 ): Promise<string[]> {
   const names = await listTestNames(file);
   let candidates = names.filter((name) => name !== victim);
 
-  if (await probe(file, victim, [])) {
+  if (await probe(file, victim, [], concurrency)) {
     throw new Error("victim fails on its own, so this is not an order problem");
   }
-  if (!(await probe(file, victim, candidates))) {
+  if (!(await probe(file, victim, candidates, concurrency))) {
     throw new Error("cannot reproduce the failure with these seeds");
   }
 
@@ -180,9 +185,9 @@ export async function findPolluters(
     const firstHalf = candidates.slice(0, middle);
     const secondHalf = candidates.slice(middle);
 
-    if (await probe(file, victim, firstHalf)) {
+    if (await probe(file, victim, firstHalf, concurrency)) {
       candidates = firstHalf;
-    } else if (await probe(file, victim, secondHalf)) {
+    } else if (await probe(file, victim, secondHalf, concurrency)) {
       candidates = secondHalf;
     } else {
       break; // neither half fails alone: the polluters work together
@@ -208,9 +213,10 @@ export async function orderProbe(
   file: string,
   testId: string,
   seedsToTry = 20,
+  concurrency: number = CONCURRENCY,
 ): Promise<OrderProbeResult> {
   const seeds = Array.from({ length: seedsToTry }, (_, i) => i + 1);
-  const failuresBySeed = await scanSeeds(file, seeds, undefined, testId);
+  const failuresBySeed = await scanSeeds(file, seeds, undefined, testId, concurrency);
 
   let seed: number | undefined;
   for (const [s, ids] of failuresBySeed) {
@@ -226,7 +232,7 @@ export async function orderProbe(
     };
   }
 
-  const c = await confirmSeed(file, seed, testId);
+  const c = await confirmSeed(file, seed, testId, undefined, concurrency);
   if (c.verdict !== "order-dependent") {
     return {
       verdict: "not-order-dependent",
@@ -236,7 +242,7 @@ export async function orderProbe(
 
   // findPolluters throws when the test fails even alone: not an order problem.
   try {
-    const polluters = await findPolluters(file, nameOfTestId(testId));
+    const polluters = await findPolluters(file, nameOfTestId(testId), concurrency);
     return {
       verdict: "order-dependent",
       seed,

@@ -35,21 +35,24 @@ function reproduceCommand(
     case "order-dependence":
       if (evidence.order.verdict !== "order-dependent") return null;
       return (
-        `pnpm exec vitest run ${file} --sequence.shuffle.tests ` +
+        `npx vitest run ${file} --sequence.shuffle.tests ` +
         `--sequence.seed=${evidence.order.seed}`
       );
     case "math-random":
       if (evidence.random.verdict !== "random-driven") return null;
       return (
         `FLAKESCOPE_RANDOM_SEED=${evidence.random.seed} ` +
-        `pnpm exec vitest run ${file} --config=.flakescope/random.config.ts`
+        `npx vitest run ${file} --config=.flakescope/random.config.mts`
       );
     case "cpu-load":
       return (
-        `for i in 1 2 3 4 5 6 7 8; do pnpm exec vitest run ${file} & done; wait`
+        `for i in 1 2 3 4 5 6 7 8; do npx vitest run ${file} & done; wait`
       );
+    case "wait-timeout":
+      // It fails in a fraction of runs, so loop until the first failure.
+      return `for i in $(seq 30); do npx vitest run ${file} || break; done`;
     case "deterministic-failure":
-      return `pnpm exec vitest run ${file}`;
+      return `npx vitest run ${file}`;
     default:
       return null;
   }

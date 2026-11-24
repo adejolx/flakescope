@@ -1,7 +1,9 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { runOnce, unwrap } from "./run.ts";
-import { scanSeeds, confirmSeed } from "./order.ts";
+import { scanSeeds, confirmSeed, CONCURRENCY } from "./order.ts";
 import { wilson } from "./stats.ts";
 import type { Interval } from "./stats.ts";
 
@@ -11,22 +13,47 @@ import type { Interval } from "./stats.ts";
 // FLAKESCOPE_RANDOM_SEED is set. Vitest has no CLI flag for setup files, so we
 // write a small config that extends the project's own config and adds it.
 
-const SETUP_FILE = resolve("src/probes/random-setup.ts");
-const BASE_CONFIG = resolve("vitest.config.ts");
+// The setup file lives next to this tool, NOT in the project being tested.
+const SETUP_FILE = fileURLToPath(new URL("./probes/random-setup.ts", import.meta.url));
 
-// Lives inside the project so `import "vitest/config"` finds node_modules.
+// The project's own config: vitest.config.* first, then vite.config.*.
+function findBaseConfig(): string {
+  const names = ["vitest.config", "vite.config"];
+  const extensions = ["ts", "mts", "cts", "js", "mjs", "cjs"];
+  for (const name of names) {
+    for (const ext of extensions) {
+      const path = resolve(`${name}.${ext}`);
+      if (existsSync(path)) return path;
+    }
+  }
+  throw new Error("No vitest.config.* or vite.config.* in this folder.");
+}
+
+// Everything the probe needs goes INSIDE the project's .flakescope folder:
+//  - `import "vitest/config"` only finds node_modules from inside the project;
+//  - Vite refuses to serve files from outside the project root, so the setup
+//    file is copied in (found out the hard way on a real project).
+// The config is .mts so Node reads it as ES modules whatever the project's
+// package.json says.
 async function writeRandomConfig(): Promise<string> {
   const dir = resolve(".flakescope");
   await mkdir(dir, { recursive: true });
 
-  const configPath = join(dir, "random.config.ts");
-  const source = `
-import { mergeConfig } from "vitest/config";
-import base from ${JSON.stringify(BASE_CONFIG)};
+  const setupFile = join(dir, "random-setup.ts");
+  await copyFile(SETUP_FILE, setupFile);
 
-export default mergeConfig(base, {
-  root: ${JSON.stringify(process.cwd())},
-  test: { setupFiles: [${JSON.stringify(SETUP_FILE)}] },
+  const configPath = join(dir, "random.config.mts");
+  // A project's config may export an object or a function. Handle both.
+  const source = `
+import { defineConfig, mergeConfig } from "vitest/config";
+import base from ${JSON.stringify(findBaseConfig())};
+
+export default defineConfig(async (env) => {
+  const resolved = typeof base === "function" ? await base(env) : base;
+  return mergeConfig(resolved, {
+    root: ${JSON.stringify(process.cwd())},
+    test: { setupFiles: [${JSON.stringify(setupFile)}] },
+  });
 });
 `;
   await writeFile(configPath, source);
@@ -42,6 +69,7 @@ export async function randomSeedProbe(
   file: string,
   testId: string,
   seedsToTry = 16,
+  concurrency: number = CONCURRENCY,
 ): Promise<RandomProbeResult> {
   const configPath = await writeRandomConfig();
 
@@ -57,7 +85,7 @@ export async function randomSeedProbe(
   };
 
   const seeds = Array.from({ length: seedsToTry }, (_, i) => i + 1);
-  const failuresBySeed = await scanSeeds(file, seeds, runWithRandomSeed, testId);
+  const failuresBySeed = await scanSeeds(file, seeds, runWithRandomSeed, testId, concurrency);
 
   let failingSeed: number | undefined;
   for (const [seed, ids] of failuresBySeed) {
@@ -74,7 +102,13 @@ export async function randomSeedProbe(
   }
 
   // confirmSeed's "order-dependent" means "this seed fails every time".
-  const c = await confirmSeed(file, failingSeed, testId, runWithRandomSeed);
+  const c = await confirmSeed(
+    file,
+    failingSeed,
+    testId,
+    runWithRandomSeed,
+    concurrency,
+  );
   return {
     verdict: c.verdict === "order-dependent" ? "random-driven" : "not-random-driven",
     seed: failingSeed,

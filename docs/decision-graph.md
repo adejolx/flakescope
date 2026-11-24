@@ -1,6 +1,6 @@
 # Decision graph: what the tool does and why
 
-Three diagrams, from the whole tool down to the details. Mermaid renders in
+Diagrams for every layer, from the whole tool down to the details. Mermaid renders in
 GitHub and in most Markdown viewers.
 
 ## 1. The whole `repeat` command (Layers 1 and 2)
@@ -73,6 +73,97 @@ flowchart TD
 Reading it: a failure that appears under a seed is only trusted if it appears
 again **every time** that seed is rerun. One pass is enough to say it is random.
 
+## 4. `findPolluters`: which test breaks the victim (Layer 3b)
+
+Runs after `order` confirms a victim. Each probe runs the victim plus a group
+of other tests under shuffle seeds 1 to 8 and asks: did the victim fail?
+
+```mermaid
+flowchart TD
+    A["Victim confirmed order-dependent"] --> B{"Probe: victim alone. Does it fail?"}
+    B -- "yes" --> X1["STOP: fails on its own, not an order problem"]
+    B -- "no" --> C{"Probe: victim + ALL other tests. Does it fail?"}
+    C -- "no" --> X2["STOP: cannot reproduce with these seeds"]
+    C -- "yes" --> D{"More than one candidate left?"}
+    D -- "no" --> R["Return the candidate: the polluter"]
+    D -- "yes" --> E["Split candidates into two halves"]
+    E --> F{"Probe: victim + first half fails?"}
+    F -- "yes" --> G["Keep the first half"]
+    F -- "no" --> H{"Probe: victim + second half fails?"}
+    H -- "yes" --> I["Keep the second half"]
+    H -- "no" --> J["Return all remaining: they pollute together"]
+    G --> D
+    I --> D
+```
+
+Why probes work: a polluter lands before the victim in about half of all
+seeds, so 8 seeds miss it about 0.4% of the time.
+
+## 5. The probes (Layer 4)
+
+Command: `node src/cli.ts probe <test-file> "<test name>"`
+
+```mermaid
+flowchart TD
+    A["Start: one flaky test"] --> B["Probe 1: run with Math.random fixed to seeds 1 to 16"]
+    B --> C{"Did the test fail under any seed?"}
+    C -- "no" --> R1["inconclusive: failing values may just be rare"]
+    C -- "yes" --> D["confirmSeed: rerun the first failing seed"]
+    D --> E{"Fails 16 reruns in a row?"}
+    E -- "yes" --> R2["random-driven: Math.random decides the result"]
+    E -- "no" --> R3["not-random-driven: that seed passed on a rerun"]
+    R1 --> L
+    R2 --> L
+    R3 --> L
+    L["Probe 2: run alone, then 8 copies at once as CPU load"] --> M{"Is the loaded fail range entirely above the alone range?"}
+    M -- "yes" --> R4["load-sensitive"]
+    M -- "no" --> R5["no-load-effect"]
+```
+
+## 6. `diagnose` and `classify` (Layer 5)
+
+Command: `node src/cli.ts diagnose <test-file> "<test name>" [--json]`
+
+```mermaid
+flowchart TD
+    A["runMany on this file only"] --> B{"Verdict broken?"}
+    B -- "yes" --> K1["deterministic-failure, high. Skip the probes."]
+    B -- "no" --> C["Run probes one after another: order, Math.random, CPU load"]
+    C --> D{"Load-sensitive?"}
+    D -- "yes" --> T["Order and random findings drop to medium confidence"]
+    D -- "no" --> T2["Order and random findings stay high"]
+    T --> E
+    T2 --> E
+    E["Collect every rule that fired: order-dependence, math-random, cpu-load"] --> F{"Any finding?"}
+    F -- "yes" --> G["Sort by confidence, highest first"]
+    F -- "no" --> H{"Repeat verdict flaky?"}
+    H -- "yes" --> U["unknown, low: no probe explains it"]
+    H -- "no" --> N["none: no flake observed"]
+```
+
+More than one cause can fire at once, so the result is a list.
+
+Why the confidence drop: the order and `Math.random` scans run Vitest copies in
+parallel, which adds CPU load. For a load-sensitive test that load could be
+what made it fail.
+
+## 7. The report (Layer 6)
+
+```mermaid
+flowchart TD
+    A["Diagnosis"] --> B["buildReport: one Report object"]
+    B --> C["Add a reproduce command per finding"]
+    C --> D{"--json?"}
+    D -- "yes" --> E["Print JSON for agents and CI"]
+    D -- "no" --> F["formatText: same facts as readable text"]
+    E --> G{"Any finding other than none?"}
+    F --> G
+    G -- "yes" --> H["Exit code 1"]
+    G -- "no" --> I["Exit code 0"]
+```
+
+Both outputs come from one Report, so they cannot disagree.
+
 ## How the diagrams fit together
 
 | Question | Answered by |
@@ -80,6 +171,10 @@ again **every time** that seed is rerun. One pass is enough to say it is random.
 | Did Vitest even run properly? | Diagram 1, the two STOP boxes |
 | Is this test flaky, broken or clean? | Diagram 2 |
 | Does the failure depend on test order? | Diagram 3 |
+| Which test causes the order problem? | Diagram 4 |
+| Does Math.random or CPU load drive it? | Diagram 5 |
+| What is the likely cause, and how sure? | Diagram 6 |
+| What do a person or an agent receive? | Diagram 7 |
 
 ## The four fixtures traced through the graph
 
