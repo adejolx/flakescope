@@ -1,0 +1,7 @@
+node_modules/
+# written by the tool while it runs
+.flakescope/
+.vitest/
+# scratch output from the guides
+out.json
+crash.json

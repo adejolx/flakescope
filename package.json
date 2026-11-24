@@ -1,0 +1,23 @@
+{
+  "name": "flakescope",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/classify.test.ts src/report.test.ts",
+    "fixtures": "vitest run",
+    "typecheck": "tsc",
+    "flakescope": "node src/cli.ts"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^31.0.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}
