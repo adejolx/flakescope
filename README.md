@@ -128,6 +128,27 @@ the `Math.random` probe's setup file lived outside the project and Vite
 refused to serve it, and the tool assumed pnpm and a root `vitest.config.ts`.
 Both are fixed.
 
+## Recorded runs
+
+Real runs of `diagnose`, recorded with asciinema. The `.cast` files are the
+real-time recordings; the GIFs are speed-ups with the waiting trimmed
+(intercode ran 290 s, the GIF shows about 8 s).
+
+**A known-flaky project: intercode** (`EventList.test.tsx`). Reports
+`WAIT-TIMEOUT`, high confidence: 15 fails in 36 runs, failing runs about 7x
+slower than passing ones. Exit code 1.
+
+![intercode diagnosis](docs/demo-intercode.gif)
+
+**A project with no known flakiness: zustand 5.1.0** (`tests/basic.test.tsx`,
+"only re-renders if selected state has changed"). Reports no flake: 0 fails in
+36 runs. Exit code 0. One test from one project, so it shows the tool does not
+invent a flake, not that zustand has none.
+
+![zustand diagnosis](docs/demo-zustand.gif)
+
+Replay a recording with `asciinema play docs/demo-intercode.cast`.
+
 ## Measured decisions
 
 Numbers, not guesses. Where a speed-up was tried and dropped, that is listed.
