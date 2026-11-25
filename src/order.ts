@@ -135,11 +135,6 @@ export async function confirmSeed(
   return { verdict: "order-dependent", failures, reruns };
 }
 
-/**
- * Escapes regex metacharacters so a test name matches literally.
- * @param text - Raw text.
- * @returns Escaped text.
- */
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

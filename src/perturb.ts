@@ -122,12 +122,6 @@ const BASELINE_RUNS = 6;
 const LOAD_COPIES = 8;
 const LOAD_ROUNDS = 2;
 
-/**
- * Runs a file once and reports whether one test failed.
- * @param file - Test file.
- * @param testId - Test to look at.
- * @returns True if it failed.
- */
 async function didFail(file: string, testId: string): Promise<boolean> {
   const tests = unwrap(await runOnce([file]));
   return tests.some((t) => t.id === testId && t.status === "failed");
