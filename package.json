@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test src/*.test.ts",
+    "test": "node --test src/*.test.ts && pnpm test:integration",
+    "test:integration": "node --test --test-concurrency=1 --test-timeout=600000 src/integration/*.it.ts",
     "fixtures": "vitest run",
     "typecheck": "tsc",
     "flakescope": "node src/cli.ts"

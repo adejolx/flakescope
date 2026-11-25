@@ -1,4 +1,4 @@
-import { runMany } from "./run.ts";
+import { runMany, runOnce, unwrap } from "./run.ts";
 import { orderProbe, CONCURRENCY } from "./order.ts";
 import { randomSeedProbe, loadProbe } from "./perturb.ts";
 import { classify } from "./classify.ts";
@@ -13,9 +13,14 @@ export type Diagnosis = { testId: string; evidence: Evidence; findings: Finding[
  * @param file - Absolute path of the test file.
  * @param testId - Test id built by makeTestId().
  * @returns The evidence and the findings.
- * @throws If the test id is not found in the file.
+ * @throws If the test id is not found in the file; checked with one run before the repeat runs start.
  */
 export async function diagnose(file: string, testId: string): Promise<Diagnosis> {
+  const known = unwrap(await runOnce([file]));
+  if (!known.some((t) => t.id === testId)) {
+    throw new Error(`No test with id ${testId}. Check the file and the test name.`);
+  }
+
   const summaries = await runMany(100, [file]);
   const summary = summaries.find((s) => s.id === testId);
   if (summary === undefined) {

@@ -80,6 +80,7 @@ function vitestEntry(): string {
  * @param extraArgs - Extra Vitest CLI arguments.
  * @param env - Extra environment variables for the child process.
  * @returns The per-test results, or a crash result if Vitest produced no report.
+ * @throws If the project has no installed Vitest.
  */
 export async function runOnce(
   files: string[] = [],
@@ -90,7 +91,6 @@ export async function runOnce(
   try {
     return await runInDir(dir, files, extraArgs, env);
   } finally {
-
     await rm(dir, { recursive: true, force: true });
   }
 }
@@ -113,13 +113,14 @@ async function runInDir(
 
   let exitCode: number | string | null = 0;
   let stderr = "";
+  const entry = vitestEntry();
 
   try {
     await execFileAsync(
 
       process.execPath,
       [
-        vitestEntry(),
+        entry,
         "run",
         "--reporter=json",
         `--outputFile=${outPath}`,
