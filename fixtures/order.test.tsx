@@ -1,5 +1,3 @@
-// FLAKE KIND: order dependence. Module-level state leaks between tests.
-// Passes in file order; fails when 'writer' runs first (shuffle).
 import { test, expect } from 'vitest';
 
 let cache: string | null = null;

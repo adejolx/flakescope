@@ -1,6 +1,3 @@
-// FLAKE KIND: order dependence with ONE hidden polluter among many tests.
-// 'victim' passes in file order (it runs first). It fails whenever
-// 'polluter: logs in' happens to run before it. The other tests are innocent.
 import { test, expect } from 'vitest';
 
 let session: string | null = null;

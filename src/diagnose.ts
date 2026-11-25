@@ -6,6 +6,15 @@ import type { Evidence, Finding } from "./classify.ts";
 
 export type Diagnosis = { testId: string; evidence: Evidence; findings: Finding[] };
 
+/**
+ * Runs the repeat check and every probe on one test, then classifies the cause.
+ * Probes run sequentially so they do not load each other; if the test is
+ * load-sensitive the scans run one at a time.
+ * @param file - Absolute path of the test file.
+ * @param testId - Test id built by makeTestId().
+ * @returns The evidence and the findings.
+ * @throws If the test id is not found in the file.
+ */
 export async function diagnose(file: string, testId: string): Promise<Diagnosis> {
   const summaries = await runMany(100, [file]);
   const summary = summaries.find((s) => s.id === testId);
@@ -22,8 +31,6 @@ export async function diagnose(file: string, testId: string): Promise<Diagnosis>
     failMedianMs: summary.failMedianMs,
   };
 
-  // Never passes: classify() calls it a plain failure whatever the probes
-  // find, so skip them.
   if (summary.verdict === "broken") {
     const evidence: Evidence = {
       repeat,
@@ -39,16 +46,11 @@ export async function diagnose(file: string, testId: string): Promise<Diagnosis>
     return { testId, evidence, findings: classify(evidence) };
   }
 
-  // Sequential on purpose: parallel probes would add CPU load to each other.
-  // The load probe goes FIRST. The repeat runs are its baseline.
   const load = await loadProbe(file, testId, {
     fails: summary.fails,
     runs: summary.passes + summary.fails,
   });
 
-  // The order and Math.random scans run several copies at once, and that
-  // alone makes a load-sensitive test fail. So for such a test, run them one
-  // at a time (slower, but the failure then means what it says).
   const scanConcurrency = load.verdict === "load-sensitive" ? 1 : CONCURRENCY;
   const order = await orderProbe(file, testId, 20, scanConcurrency);
   const random = await randomSeedProbe(file, testId, 16, scanConcurrency);

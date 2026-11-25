@@ -1,10 +1,5 @@
-// node src/cli.ts [maxRuns]                          repeat the suite
-// node src/cli.ts order <file>                       order dependence in a file
-// node src/cli.ts probe <file> "<test>"              Math.random and CPU load
-// node src/cli.ts diagnose <file> "<test>" [--json]  everything, then a cause
-
 import { resolve } from "node:path";
-import { runMany, nameOfTestId } from "./run.ts";
+import { runMany, nameOfTestId, makeTestId } from "./run.ts";
 import { scanSeeds, confirmSeed, findPolluters } from "./order.ts";
 import { randomSeedProbe, loadProbe } from "./perturb.ts";
 import { diagnose } from "./diagnose.ts";
@@ -13,13 +8,20 @@ import { buildReport, formatText } from "./report.ts";
 const DEFAULT_MAX_RUNS = 100;
 const SEEDS_TO_TRY = 20;
 
+/**
+ * Formats a fraction as a whole-number percentage, e.g. 0.256 -> "26%".
+ * @param fraction - Value between 0 and 1.
+ * @returns The percentage string.
+ */
 function formatPercent(fraction: number): string {
   const percent = fraction * 100;
   return `${percent.toFixed(0)}%`;
 }
 
-// ---------- repeat ----------
-
+/**
+ * Repeats the whole suite and prints a verdict per test plus a run-count summary.
+ * @param maxRunsArg - Optional maximum number of runs; non-positive or missing uses the default.
+ */
 async function repeatCommand(maxRunsArg: string | undefined): Promise<void> {
   let maxRuns = DEFAULT_MAX_RUNS;
   if (maxRunsArg !== undefined && Number(maxRunsArg) > 0) {
@@ -47,7 +49,6 @@ async function repeatCommand(maxRunsArg: string | undefined): Promise<void> {
     );
   }
 
-  // "Fixed": every test runs as many times as the busiest one.
   const fixedExecutions = busiestTestRuns * summaries.length;
   console.log(
     `\n${busiestTestRuns} runs, ${totalExecutions} test executions ` +
@@ -55,8 +56,10 @@ async function repeatCommand(maxRunsArg: string | undefined): Promise<void> {
   );
 }
 
-// ---------- order ----------
-
+/**
+ * Scans a file for order dependence and prints each failing test with its polluters.
+ * @param file - Test file; prints usage when missing.
+ */
 async function orderCommand(file: string | undefined): Promise<void> {
   if (file === undefined) {
     console.log("Usage: node src/cli.ts order <test-file>");
@@ -70,7 +73,6 @@ async function orderCommand(file: string | undefined): Promise<void> {
 
   const failuresBySeed = await scanSeeds(file, seeds);
 
-  // First seed that made each test fail (Map keeps insertion order).
   const firstSeedByTest = new Map<string, number>();
   for (const [seed, failedIds] of failuresBySeed) {
     for (const id of failedIds) {
@@ -100,8 +102,11 @@ async function orderCommand(file: string | undefined): Promise<void> {
   }
 }
 
-// ---------- probe ----------
-
+/**
+ * Runs the Math.random and CPU-load probes on one test and prints the results.
+ * @param fileArg - Test file path.
+ * @param testName - Full test name.
+ */
 async function probeCommand(
   fileArg: string | undefined,
   testName: string | undefined,
@@ -111,7 +116,7 @@ async function probeCommand(
     return;
   }
   const file = resolve(fileArg);
-  const testId = `${file}::${testName}`;
+  const testId = makeTestId(file, testName);
 
   console.log(`probing: ${testName}\n`);
 
@@ -142,9 +147,10 @@ async function probeCommand(
   );
 }
 
-// ---------- diagnose ----------
-
-// --json prints only the JSON report. Exit code 1 when a problem was found.
+/**
+ * Diagnoses one test and prints a text or JSON report. Sets exit code 1 when a problem was found.
+ * @param args - File, test name and an optional --json flag.
+ */
 async function diagnoseCommand(args: string[]): Promise<void> {
   const json = args.includes("--json");
   const [fileArg, testName] = args.filter((arg) => arg !== "--json");
@@ -154,7 +160,7 @@ async function diagnoseCommand(args: string[]): Promise<void> {
     return;
   }
   const file = resolve(fileArg);
-  const diagnosis = await diagnose(file, `${file}::${testName}`);
+  const diagnosis = await diagnose(file, makeTestId(file, testName));
   const report = buildReport(diagnosis, process.cwd());
 
   if (json) {
@@ -165,8 +171,6 @@ async function diagnoseCommand(args: string[]): Promise<void> {
 
   process.exitCode = report.hasProblem ? 1 : 0;
 }
-
-// ---------- pick the command ----------
 
 const command = process.argv[2];
 

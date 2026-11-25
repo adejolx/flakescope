@@ -1,5 +1,3 @@
-// FLAKE KIND: timing. Component loads after a random delay; the test
-// asserts after a fixed wait. Fails when the delay exceeds the wait.
 import { useEffect, useState } from 'react';
 import { render, screen } from '@testing-library/react';
 import { test, expect } from 'vitest';

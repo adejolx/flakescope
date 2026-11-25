@@ -1,16 +1,14 @@
-// Pure rules over collected evidence. Runs nothing; see classify.test.ts.
-
 import type { Verdict, Interval } from "./stats.ts";
 
 export type Evidence = {
-  // How many copies the order and Math.random scans ran at once. 1 is quiet.
+
   scanConcurrency: number;
   repeat: {
     verdict: Verdict;
     passes: number;
     fails: number;
     failRate: Interval;
-    // Typical time of a passing and of a failing run, when known.
+
     passMedianMs?: number;
     failMedianMs?: number;
   };
@@ -41,8 +39,8 @@ export type Confidence = "high" | "medium" | "low";
 export type Finding = {
   cause: Cause;
   confidence: Confidence;
-  because: string[]; // the evidence, one short line each
-  suggestion: string; // what to do about it
+  because: string[];
+  suggestion: string;
 };
 
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
@@ -50,10 +48,12 @@ const range = (r: Interval) => `${pct(r.low)}..${pct(r.high)}`;
 
 const CONFIDENCE_RANK: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };
 
-// A flaky test whose failing runs take far longer than its passing runs is
-// waiting for something that sometimes never happens, then giving up. Slowness
-// would give a spread of times. This gives two clusters: fast, and "the
-// timeout". "Far longer" = at least 4x and at least 200 ms more.
+/**
+ * Detects the "wait timed out" signature: failing runs take at least 4x and at
+ * least 200 ms longer than passing runs.
+ * @param r - Repeat-run evidence.
+ * @returns The typical pass and fail durations when the pattern holds, else undefined.
+ */
 function timeoutPattern(
   r: Evidence["repeat"],
 ): { passMs: number; failMs: number } | undefined {
@@ -67,8 +67,18 @@ function timeoutPattern(
   return undefined;
 }
 
+/**
+ * Applies the diagnosis rules to collected evidence.
+ * A test that never passes is a deterministic failure and nothing else is
+ * reported. Otherwise every cause the evidence supports is returned, most
+ * confident first; if none applies the result is "unknown" (flaky) or "none".
+ * Order and Math.random findings are downgraded to medium confidence when the
+ * test is load-sensitive and the scans ran in parallel.
+ * @param e - Evidence from the repeat runs and the probes.
+ * @returns At least one finding, sorted by confidence.
+ */
 export function classify(e: Evidence): Finding[] {
-  // Never passes: a real failure, not a flake.
+
   if (e.repeat.verdict === "broken") {
     const runs = e.repeat.passes + e.repeat.fails;
     return [
@@ -81,10 +91,6 @@ export function classify(e: Evidence): Finding[] {
     ];
   }
 
-  // Scans that ran several copies at once add CPU load. If the test is
-  // load-sensitive, a failure seen there may come from the load itself, so
-  // trust those two less. (diagnose reruns them one at a time to avoid this,
-  // which sets scanConcurrency to 1.)
   const loadSensitive = e.load.verdict === "load-sensitive";
   const confounded = loadSensitive && e.scanConcurrency > 1;
   const trust: Confidence = confounded ? "medium" : "high";
@@ -141,7 +147,7 @@ export function classify(e: Evidence): Finding[] {
     const times = Math.round(slow.failMs / Math.max(slow.passMs, 1));
     findings.push({
       cause: "wait-timeout",
-      // Few failures means few durations to go on.
+
       confidence: e.repeat.fails >= 3 ? "high" : "medium",
       because: [
         `failing runs take about ${slow.failMs} ms, passing runs about ${slow.passMs} ms (${times}x)`,
@@ -161,7 +167,6 @@ export function classify(e: Evidence): Finding[] {
     );
   }
 
-  // Flaky, but no probe explains it.
   if (e.repeat.verdict === "flaky") {
     return [
       {

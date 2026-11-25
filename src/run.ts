@@ -11,7 +11,7 @@ export type TestStatus = "passed" | "failed" | "other";
 export type TestResult = {
   id: string;
   status: TestStatus;
-  ms: number; // how long the test took, from Vitest's own report
+  ms: number;
 };
 export type RunResult =
   | { kind: "ok"; tests: TestResult[] }
@@ -25,19 +25,45 @@ function toStatus(s: string): TestStatus {
   return "other";
 }
 
-// Test ids look like "/abs/path/file.test.tsx::test name".
+const ID_SEPARATOR = "\0";
+
+/**
+ * Builds a test id from a file path and a test name. The separator is NUL,
+ * which cannot occur in a file path, so the id parses unambiguously.
+ * @param file - Test file path.
+ * @param name - Full test name; may contain any characters.
+ * @returns The test id.
+ */
+export function makeTestId(file: string, name: string): string {
+  return `${file}${ID_SEPARATOR}${name}`;
+}
+
+/**
+ * Extracts the file part of a test id built by makeTestId().
+ * @param id - Test id.
+ * @returns The file path.
+ */
 export function fileOfTestId(id: string): string {
-  const parts = id.split("::");
-  return parts[0];
+  const separatorAt = id.indexOf(ID_SEPARATOR);
+  return separatorAt === -1 ? id : id.slice(0, separatorAt);
 }
 
+/**
+ * Extracts the test name from a test id built by makeTestId().
+ * Names containing any characters are returned whole.
+ * @param id - Test id.
+ * @returns The test name.
+ */
 export function nameOfTestId(id: string): string {
-  const separatorAt = id.indexOf("::");
-  return id.slice(separatorAt + 2);
+  const separatorAt = id.indexOf(ID_SEPARATOR);
+  return separatorAt === -1 ? "" : id.slice(separatorAt + 1);
 }
 
-// The tool is started from the project's root folder, so this is the
-// project's own Vitest. (Needs a node_modules folder: not yarn Plug'n'Play.)
+/**
+ * Locates the project's own Vitest entry point under the working directory.
+ * @returns Absolute path to vitest.mjs.
+ * @throws If node_modules/vitest is missing.
+ */
 function vitestEntry(): string {
   const entry = resolve("node_modules/vitest/vitest.mjs");
   if (!existsSync(entry)) {
@@ -48,7 +74,13 @@ function vitestEntry(): string {
   return entry;
 }
 
-// files: limit the run to these test files (empty: all).
+/**
+ * Runs Vitest once and collects the results.
+ * @param files - Test files to run; empty runs everything.
+ * @param extraArgs - Extra Vitest CLI arguments.
+ * @param env - Extra environment variables for the child process.
+ * @returns The per-test results, or a crash result if Vitest produced no report.
+ */
 export async function runOnce(
   files: string[] = [],
   extraArgs: string[] = [],
@@ -58,13 +90,19 @@ export async function runOnce(
   try {
     return await runInDir(dir, files, extraArgs, env);
   } finally {
-    // runInDir has read the result file by now, so the folder can go.
-    // `finally` runs on a return AND on a thrown error: no leaks either way.
+
     await rm(dir, { recursive: true, force: true });
   }
 }
 
-// Does the actual work of runOnce, using `dir` for Vitest's result file.
+/**
+ * Does the work of runOnce, writing Vitest's JSON report into dir.
+ * @param dir - Existing scratch directory.
+ * @param files - Test files to run.
+ * @param extraArgs - Extra Vitest CLI arguments.
+ * @param env - Extra environment variables.
+ * @returns Parsed results, or a crash result when no report file exists.
+ */
 async function runInDir(
   dir: string,
   files: string[],
@@ -78,8 +116,7 @@ async function runInDir(
 
   try {
     await execFileAsync(
-      // Run the project's own Vitest with this same Node. That works with
-      // pnpm, yarn and npm alike, and skips the package manager's startup.
+
       process.execPath,
       [
         vitestEntry(),
@@ -110,7 +147,7 @@ async function runInDir(
   for (const file of report.testResults) {
     for (const t of file.assertionResults) {
       testArr.push({
-        id: `${file.name}::${t.fullName}`,
+        id: makeTestId(file.name, t.fullName),
         status: toStatus(t.status),
         ms: Math.round(t.duration ?? 0),
       });
@@ -120,7 +157,12 @@ async function runInDir(
   return { kind: "ok", tests: testArr };
 }
 
-// A crash or an empty run is a broken setup, not a test result: throw.
+/**
+ * Returns the tests of a run, treating a crash or an empty run as a broken setup.
+ * @param result - Result from runOnce().
+ * @returns The test results.
+ * @throws On a crash or when no tests ran.
+ */
 export function unwrap(result: RunResult): TestResult[] {
   if (result.kind === "crash") {
     throw new Error(
@@ -136,23 +178,27 @@ export type TestSummary = {
   passes: number;
   fails: number;
   verdict: Verdict;
-  failRate: Interval; // true fail rate is probably inside this range
-  // The typical time of a passing run and of a failing run (undefined if the
-  // test never passed or never failed). A big gap is evidence: see classify.ts.
+  failRate: Interval;
+
   passMedianMs: number | undefined;
   failMedianMs: number | undefined;
 };
 
-// Copies of the suite run at once. On 8 cores a 130 ms render took 137 ms at
-// 2 at once (fine) and 174 ms at 4 (distorts timing). Set to 1 for a quiet
-// baseline.
 const RUNS_AT_ONCE = 2;
 
+/**
+ * Repeats the suite until every test has a decided verdict or the budget is
+ * spent. Each round reruns only files that still hold an undecided test.
+ * Skipped tests count as neither pass nor fail.
+ * @param maxRuns - Maximum number of suite runs.
+ * @param startFiles - Files to run first; empty runs everything.
+ * @returns One summary per test seen.
+ */
 export async function runMany(
   maxRuns: number,
   startFiles: string[] = [],
 ): Promise<TestSummary[]> {
-  // Skipped tests count as neither pass nor fail.
+
   const counts = new Map<
     string,
     { passes: number; fails: number; passMs: number[]; failMs: number[] }
@@ -180,7 +226,6 @@ export async function runMany(
       }
     }
 
-    // Next run: only files that still hold an undecided test.
     const undecidedFiles = new Set<string>();
     for (const [id, c] of counts) {
       const verdict = decide(c.passes, c.fails);
@@ -203,7 +248,6 @@ export async function runMany(
   for (const [id, c] of counts) {
     const total = c.passes + c.fails;
 
-    // Every run skipped: no information, so the full range.
     let failRate: Interval = { low: 0, high: 1 };
     if (total > 0) {
       failRate = wilson(c.fails, total);

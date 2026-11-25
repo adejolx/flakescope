@@ -1,11 +1,8 @@
-// buildReport() gives the JSON for agents and CI; formatText() renders the
-// same Report for people, so the two cannot disagree. Pure; no Vitest runs.
-
 import { relative } from "node:path";
+import { fileOfTestId, nameOfTestId } from "./run.ts";
 import type { Diagnosis } from "./diagnose.ts";
 import type { Finding, Evidence } from "./classify.ts";
 
-// Bump when a field is renamed or removed.
 export const SCHEMA_VERSION = 1;
 
 export type ReportFinding = Finding & {
@@ -25,7 +22,13 @@ export type Report = {
   findings: ReportFinding[];
 };
 
-// A shell command that makes the failure happen, or null.
+/**
+ * Builds a shell command that makes the diagnosed failure happen.
+ * @param finding - The finding to reproduce.
+ * @param evidence - Evidence holding the seeds the command needs.
+ * @param file - Test file path, relative to the project root.
+ * @returns The command, or null when the cause has no reproduction.
+ */
 function reproduceCommand(
   finding: Finding,
   evidence: Evidence,
@@ -49,7 +52,7 @@ function reproduceCommand(
         `for i in 1 2 3 4 5 6 7 8; do npx vitest run ${file} & done; wait`
       );
     case "wait-timeout":
-      // It fails in a fraction of runs, so loop until the first failure.
+
       return `for i in $(seq 30); do npx vitest run ${file} || break; done`;
     case "deterministic-failure":
       return `npx vitest run ${file}`;
@@ -58,12 +61,16 @@ function reproduceCommand(
   }
 }
 
-// Paths in the report are relative to root.
+/**
+ * Builds the machine-readable report for a diagnosis.
+ * @param diagnosis - Result of diagnose().
+ * @param root - Directory the reported file path is made relative to.
+ * @returns A JSON-serialisable report.
+ */
 export function buildReport(diagnosis: Diagnosis, root: string): Report {
   const { testId, evidence, findings } = diagnosis;
-  const separatorAt = testId.indexOf("::");
-  const absoluteFile = testId.slice(0, separatorAt);
-  const name = testId.slice(separatorAt + 2);
+  const absoluteFile = fileOfTestId(testId);
+  const name = nameOfTestId(testId);
   const file = relative(root, absoluteFile);
 
   return {
@@ -85,6 +92,11 @@ export function buildReport(diagnosis: Diagnosis, root: string): Report {
 
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 
+/**
+ * Renders a report as plain text for people.
+ * @param report - Report from buildReport().
+ * @returns Multi-line text: header, then one block per finding.
+ */
 export function formatText(report: Report): string {
   const o = report.observed;
   const runs = o.passes + o.fails;

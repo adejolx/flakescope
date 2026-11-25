@@ -1,8 +1,3 @@
-// FLAKE KIND: a wait that times out because the update never arrives.
-// Modeled on a real flaky test found in the intercode project: passing runs
-// finish in a few ms, failing runs sit until waitFor gives up.
-// About 30% of the time the update is skipped. The skip depends on the clock
-// (not Math.random), so the Math.random probe can't explain it.
 import { useEffect, useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { test, expect } from 'vitest';

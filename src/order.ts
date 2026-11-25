@@ -1,13 +1,21 @@
 import { runOnce, unwrap, nameOfTestId } from "./run.ts";
 import { decide } from "./stats.ts";
 
-// Parallel runs are safe here: an order failure depends on the seed, not on
-// timing. Do not do this for timing-flake detection (CPU contention).
-// Measured on 8 cores: 4 at once is about 3x the throughput of 1.
-// A test that is sensitive to CPU load must be checked with 1 (see diagnose.ts).
 export const CONCURRENCY = 4;
 
+/**
+ * Rejects a concurrency that would make the scans loop forever.
+ * @param concurrency - Number of runs at once.
+ * @throws RangeError unless it is a positive integer.
+ */
+function requireConcurrency(concurrency: number): void {
+  if (!Number.isInteger(concurrency) || concurrency < 1) {
+    throw new RangeError(`concurrency must be a positive integer, got ${concurrency}`);
+  }
+}
+
 function chunk<T>(items: T[], size: number): T[][] {
+  requireConcurrency(size);
   const chunks: T[][] = [];
   for (let i = 0; i < items.length; i += size) {
     chunks.push(items.slice(i, i + size));
@@ -15,6 +23,12 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
+/**
+ * Runs a file once under a shuffle seed.
+ * @param file - Test file.
+ * @param seed - Shuffle seed.
+ * @returns Ids of the tests that failed.
+ */
 async function failedTestsForSeed(
   file: string,
   seed: number,
@@ -31,12 +45,18 @@ async function failedTestsForSeed(
   return failedIds;
 }
 
-// Runs one file once with one seed, returns the ids that failed.
-// perturb.ts passes a different runner that fixes Math.random instead.
 export type SeedRunner = (file: string, seed: number) => Promise<string[]>;
 
-// Returns only the seeds under which something failed.
-// stopWhenFailed: stop after the first group of seeds where this test failed.
+/**
+ * Runs a file under many seeds, several at a time.
+ * @param file - Test file.
+ * @param seeds - Seeds to try, in order.
+ * @param runSeed - Runner for one seed; defaults to a shuffle run.
+ * @param stopWhenFailed - Test id; scanning stops after the first group of seeds in which it failed.
+ * @param concurrency - Seeds run at once; a positive integer.
+ * @returns Map from seed to failed test ids, holding only seeds with a failure.
+ * @throws RangeError if concurrency is not a positive integer.
+ */
 export async function scanSeeds(
   file: string,
   seeds: number[],
@@ -76,10 +96,17 @@ export type SeedConfirmation = {
   reruns: number;
 };
 
-// Reruns one seed until the evidence is strong.
-// One pass -> "random". 16 fails in a row -> "order-dependent".
-// Why 16: with only 3 reruns, a flake failing 65% of the time was mislabeled
-// order-dependent about 27% of the time. 16 in a row by luck is under 0.1%.
+/**
+ * Reruns one seed until the evidence is strong. One pass means "random";
+ * enough consecutive fails (see decide()) means "order-dependent".
+ * @param file - Test file.
+ * @param seed - Seed to rerun.
+ * @param testId - Test that failed under the seed.
+ * @param runSeed - Runner for one seed.
+ * @param concurrency - Reruns per batch.
+ * @returns The verdict with the failure and rerun counts.
+ * @throws RangeError if concurrency is not a positive integer.
+ */
 export async function confirmSeed(
   file: string,
   seed: number,
@@ -87,10 +114,10 @@ export async function confirmSeed(
   runSeed: SeedRunner = failedTestsForSeed,
   concurrency: number = CONCURRENCY,
 ): Promise<SeedConfirmation> {
+  requireConcurrency(concurrency);
   let failures = 0;
   let reruns = 0;
 
-  // decide(0, failures) returns "broken" after 16 fails in a row.
   while (decide(0, failures) !== "broken") {
     const batch = await Promise.all(
       Array.from({ length: concurrency }, () => runSeed(file, seed)),
@@ -108,14 +135,11 @@ export async function confirmSeed(
   return { verdict: "order-dependent", failures, reruns };
 }
 
-// ---------- find WHICH test pollutes the victim ----------
-//
-// Vitest's JSON lists tests in file order, not run order, so the polluter
-// can't be read from a failing run. Instead: run the victim with a group of
-// others under seeds 1..8, and bisect the group. Any one polluter lands
-// before the victim in about half of all seeds.
-
-// "." and "(" in a test name mean something in a regex; "$&" is the match.
+/**
+ * Escapes regex metacharacters so a test name matches literally.
+ * @param text - Raw text.
+ * @returns Escaped text.
+ */
 function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -127,15 +151,22 @@ async function listTestNames(file: string): Promise<string[]> {
 
 const PROBE_SEEDS = [1, 2, 3, 4, 5, 6, 7, 8];
 
-// true if the victim failed under any seed. A group holding the polluter is
-// missed with chance 0.5^8, about 0.4%.
+/**
+ * Checks whether a victim test fails under any of the probe seeds when run
+ * with a given group of other tests.
+ * @param file - Test file.
+ * @param victim - Name of the victim test.
+ * @param others - Names of the other tests to include.
+ * @param concurrency - Seeds run at once.
+ * @returns True if the victim failed under any seed.
+ */
 async function probe(
   file: string,
   victim: string,
   others: string[],
   concurrency: number,
 ): Promise<boolean> {
-  // execFile passes the pattern as one argument, so no shell quoting.
+
   const names = [victim, ...others].map(escapeRegex);
   const pattern = `^(${names.join("|")})$`;
 
@@ -163,8 +194,15 @@ async function probe(
   return false;
 }
 
-// Usually returns one name. Returns several if the failure needs tests from
-// both halves together.
+/**
+ * Finds which test pollutes a victim by bisecting the other tests.
+ * Returns several names if the failure needs tests from both halves together.
+ * @param file - Test file.
+ * @param victim - Name of the failing test.
+ * @param concurrency - Seeds run at once.
+ * @returns The polluting test names.
+ * @throws If the victim fails alone, or the failure cannot be reproduced.
+ */
 export async function findPolluters(
   file: string,
   victim: string,
@@ -190,14 +228,12 @@ export async function findPolluters(
     } else if (await probe(file, victim, secondHalf, concurrency)) {
       candidates = secondHalf;
     } else {
-      break; // neither half fails alone: the polluters work together
+      break;
     }
   }
 
   return candidates;
 }
-
-// ---------- order check for ONE test (used by diagnose) ----------
 
 export type OrderProbeResult =
   | {
@@ -209,6 +245,15 @@ export type OrderProbeResult =
     }
   | { verdict: "not-order-dependent"; detail: string };
 
+/**
+ * Checks one test for order dependence: scans seeds, confirms the failing
+ * seed, then locates the polluters.
+ * @param file - Test file.
+ * @param testId - Test to check.
+ * @param seedsToTry - Number of seeds to scan.
+ * @param concurrency - Seeds run at once.
+ * @returns The verdict, with seed and polluters when order-dependent.
+ */
 export async function orderProbe(
   file: string,
   testId: string,
@@ -240,7 +285,6 @@ export async function orderProbe(
     };
   }
 
-  // findPolluters throws when the test fails even alone: not an order problem.
   try {
     const polluters = await findPolluters(file, nameOfTestId(testId), concurrency);
     return {
