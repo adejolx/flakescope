@@ -2,21 +2,12 @@ import { resolve } from "node:path";
 import { runMany, nameOfTestId, makeTestId } from "./run.ts";
 import { scanSeeds, confirmSeed, findPolluters } from "./order.ts";
 import { randomSeedProbe, loadProbe } from "./perturb.ts";
+import { formatPercent } from "./stats.ts";
 import { diagnose } from "./diagnose.ts";
 import { buildReport, formatText } from "./report.ts";
 
 const DEFAULT_MAX_RUNS = 100;
 const SEEDS_TO_TRY = 20;
-
-/**
- * Formats a fraction as a whole-number percentage, e.g. 0.256 -> "26%".
- * @param fraction - Value between 0 and 1.
- * @returns The percentage string.
- */
-function formatPercent(fraction: number): string {
-  const percent = fraction * 100;
-  return `${percent.toFixed(0)}%`;
-}
 
 /**
  * Repeats the whole suite and prints a verdict per test plus a run-count summary.

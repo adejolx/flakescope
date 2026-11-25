@@ -6,6 +6,10 @@ import type { Evidence, Finding } from "./classify.ts";
 
 export type Diagnosis = { testId: string; evidence: Evidence; findings: Finding[] };
 
+function noSuchTest(testId: string): Error {
+  return new Error(`No test with id ${testId}. Check the file and the test name.`);
+}
+
 /**
  * Runs the repeat check and every probe on one test, then classifies the cause.
  * Probes run sequentially so they do not load each other; if the test is
@@ -18,13 +22,13 @@ export type Diagnosis = { testId: string; evidence: Evidence; findings: Finding[
 export async function diagnose(file: string, testId: string): Promise<Diagnosis> {
   const known = unwrap(await runOnce([file]));
   if (!known.some((t) => t.id === testId)) {
-    throw new Error(`No test with id ${testId}. Check the file and the test name.`);
+    throw noSuchTest(testId);
   }
 
   const summaries = await runMany(100, [file]);
   const summary = summaries.find((s) => s.id === testId);
   if (summary === undefined) {
-    throw new Error(`No test with id ${testId}. Check the file and the test name.`);
+    throw noSuchTest(testId);
   }
 
   const repeat: Evidence["repeat"] = {

@@ -3,7 +3,7 @@ import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runOnce, unwrap } from "./run.ts";
-import { scanSeeds, confirmSeed, CONCURRENCY } from "./order.ts";
+import { scanSeeds, confirmSeed, firstSeedFailing, CONCURRENCY } from "./order.ts";
 import { wilson } from "./stats.ts";
 import type { Interval } from "./stats.ts";
 
@@ -91,13 +91,7 @@ export async function randomSeedProbe(
   const seeds = Array.from({ length: seedsToTry }, (_, i) => i + 1);
   const failuresBySeed = await scanSeeds(file, seeds, runWithRandomSeed, testId, concurrency);
 
-  let failingSeed: number | undefined;
-  for (const [seed, ids] of failuresBySeed) {
-    if (ids.includes(testId)) {
-      failingSeed = seed;
-      break;
-    }
-  }
+  const failingSeed = firstSeedFailing(failuresBySeed, testId);
 
   if (failingSeed === undefined) {
     return { verdict: "inconclusive", seedsTried: seedsToTry };

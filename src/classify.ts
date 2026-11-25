@@ -1,3 +1,4 @@
+import { formatPercent as pct } from "./stats.ts";
 import type { Verdict, Interval } from "./stats.ts";
 
 export type Evidence = {
@@ -43,7 +44,6 @@ export type Finding = {
   suggestion: string;
 };
 
-const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 const range = (r: Interval) => `${pct(r.low)}..${pct(r.high)}`;
 
 const CONFIDENCE_RANK: Record<Confidence, number> = { high: 0, medium: 1, low: 2 };

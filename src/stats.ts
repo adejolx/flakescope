@@ -2,6 +2,15 @@ export type Verdict = "broken" | "flaky" | "clean" | "undecided";
 export type Interval = { low: number; high: number };
 
 /**
+ * Formats a fraction as a whole-number percentage, e.g. 0.256 -> "26%".
+ * @param fraction - Value between 0 and 1.
+ * @returns The percentage string.
+ */
+export function formatPercent(fraction: number): string {
+  return `${(fraction * 100).toFixed(0)}%`;
+}
+
+/**
  * Wilson score confidence interval for a binomial proportion.
  * @param fails - Number of failures observed.
  * @param n - Total number of runs.

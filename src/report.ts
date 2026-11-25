@@ -1,5 +1,6 @@
 import { relative } from "node:path";
 import { fileOfTestId, nameOfTestId } from "./run.ts";
+import { formatPercent as pct } from "./stats.ts";
 import type { Diagnosis } from "./diagnose.ts";
 import type { Finding, Evidence } from "./classify.ts";
 
@@ -89,8 +90,6 @@ export function buildReport(diagnosis: Diagnosis, root: string): Report {
     })),
   };
 }
-
-const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 
 /**
  * Renders a report as plain text for people.

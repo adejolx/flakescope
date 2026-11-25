@@ -88,6 +88,22 @@ export async function scanSeeds(
   return failuresBySeed;
 }
 
+/**
+ * Finds the first seed in a scan result at which a given test failed.
+ * @param failuresBySeed - Result of scanSeeds().
+ * @param testId - Test to look for.
+ * @returns The seed, or undefined if the test never failed.
+ */
+export function firstSeedFailing(
+  failuresBySeed: Map<number, string[]>,
+  testId: string,
+): number | undefined {
+  for (const [seed, ids] of failuresBySeed) {
+    if (ids.includes(testId)) return seed;
+  }
+  return undefined;
+}
+
 export type SeedVerdict = "order-dependent" | "random";
 
 export type SeedConfirmation = {
@@ -258,13 +274,7 @@ export async function orderProbe(
   const seeds = Array.from({ length: seedsToTry }, (_, i) => i + 1);
   const failuresBySeed = await scanSeeds(file, seeds, undefined, testId, concurrency);
 
-  let seed: number | undefined;
-  for (const [s, ids] of failuresBySeed) {
-    if (ids.includes(testId)) {
-      seed = s;
-      break;
-    }
-  }
+  const seed = firstSeedFailing(failuresBySeed, testId);
   if (seed === undefined) {
     return {
       verdict: "not-order-dependent",
